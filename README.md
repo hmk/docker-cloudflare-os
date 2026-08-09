@@ -85,7 +85,10 @@ os.example.com {
 | `latest` | Most recent successful build of upstream `main`. |
 | `main-<sha>` | Exact upstream commit the image was built from — pin this for reproducibility. |
 | `YYYYMMDD` | Daily pointer. |
-| `v<version>` | Upstream `package.json` version (static at `1.0.0` until upstream starts versioning). |
+
+Upstream publishes no tags or releases, so this image carries no version numbers of its own —
+the upstream commit sha is the version. If upstream starts tagging releases, image tags will
+mirror theirs.
 
 ## What's changed vs upstream
 

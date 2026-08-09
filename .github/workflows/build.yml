@@ -2,16 +2,20 @@
 # there's one we haven't built yet. Stateless: "have we built this?" is answered by checking
 # Docker Hub for the main-<sha> tag, not by tracking anything in this repo.
 #
-# Versioning: upstream publishes no tags or releases yet (package.json is pinned at 1.0.0), so
-# images are versioned by upstream commit and date:
+# Versioning: upstream publishes no tags or releases (its package.json "1.0.0" is boilerplate,
+# not a version), so images carry no version tags of their own — builds are identified by the
+# upstream commit they contain:
 #   latest                       most recent successful build
 #   main-<upstream short sha>    exact upstream commit the image was built from
 #   YYYYMMDD                     daily pointer (last build of that day wins)
-#   v<package.json version>      only moves when upstream bumps it; becomes meaningful the day
-#                                upstream starts versioning
+# If upstream starts tagging releases, mirror their tags verbatim here.
 #
 # Secrets required (repo settings → secrets → actions):
-#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN   for pushing to Docker Hub
+#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN   for pushing to Docker Hub (Read & Write scope)
+#   DOCKERHUB_RWD_TOKEN                    optional: Read/Write/Delete-scope token used only to
+#                                          sync README.md to the Docker Hub Overview page (the
+#                                          Hub API gates metadata updates above plain Write);
+#                                          the sync step is skipped when this secret is absent
 # The GHCR push uses the built-in GITHUB_TOKEN.
 #
 # If upstream changes conflict with patches/, the Dockerfile's `git apply --3way` step fails the
@@ -77,9 +81,6 @@ jobs:
         if: steps.decide.outputs.build == 'true'
         id: tags
         run: |
-          PKG_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/cloudflare/cloudflare-os/${{ steps.upstream.outputs.sha }}/package.json" \
-            | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
-          echo "pkg_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
@@ -148,7 +149,6 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.date }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:v${{ steps.tags.outputs.pkg_version }}
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}
           cache-from: type=gha
@@ -158,3 +158,16 @@ jobs:
             org.opencontainers.image.description=Cloudflare OS (cloudflare/cloudflare-os) self-hosted on workerd, upstream ${{ steps.upstream.outputs.short_sha }}
             org.opencontainers.image.revision=${{ steps.upstream.outputs.sha }}
             org.opencontainers.image.licenses=MIT
+
+      # Keep the Docker Hub Overview page in sync with README.md. Needs a Read/Write/Delete
+      # token (DOCKERHUB_RWD_TOKEN) because the Hub API gates metadata updates above plain
+      # Write; skipped when the secret isn't configured.
+      - name: Sync Docker Hub description
+        if: steps.decide.outputs.build == 'true' && secrets.DOCKERHUB_RWD_TOKEN != ''
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_RWD_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          short-description: Cloudflare OS self-hosted on workerd — linuxserver.io-style image, auto-built from upstream
+          readme-filepath: ./README.md
