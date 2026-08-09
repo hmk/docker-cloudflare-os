@@ -162,8 +162,11 @@ jobs:
       # Keep the Docker Hub Overview page in sync with README.md. Needs a Read/Write/Delete
       # token (DOCKERHUB_RWD_TOKEN) because the Hub API gates metadata updates above plain
       # Write; skipped when the secret isn't configured.
+      # (The secrets context can't be used in `if:` expressions, hence the env indirection.)
       - name: Sync Docker Hub description
-        if: steps.decide.outputs.build == 'true' && secrets.DOCKERHUB_RWD_TOKEN != ''
+        if: steps.decide.outputs.build == 'true' && env.RWD_TOKEN != ''
+        env:
+          RWD_TOKEN: ${{ secrets.DOCKERHUB_RWD_TOKEN }}
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
