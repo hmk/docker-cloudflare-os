@@ -1,7 +1,7 @@
 # Cloudflare OS self-hosted. See README.md for full docs.
 services:
   cloudflare-os:
-    image: hmk/cloudflare-os:latest
+    image: heimark/cloudflare-os:latest
     # Or build locally from upstream main:
     # build: .
     container_name: cloudflare-os

@@ -7,7 +7,7 @@ pre-built at image build time so containers start straight into serving.
 Images rebuild automatically within an hour of upstream commits, are smoke-tested before
 publishing, and ship for `linux/amd64` + `linux/arm64`:
 
-- Docker Hub: `hmk/cloudflare-os`
+- Docker Hub: `heimark/cloudflare-os`
 - GHCR: `ghcr.io/hmk/cloudflare-os`
 
 > **Status:** upstream calls the wrangler/local path "not meant for production use". This image
@@ -25,7 +25,7 @@ docker run -d --name cloudflare-os \
   -v ./data:/config \
   -e PUID=1000 -e PGID=1000 \
   -e ANTHROPIC_API_KEY=sk-ant-... \
-  hmk/cloudflare-os:latest
+  heimark/cloudflare-os:latest
 ```
 
 Open http://localhost:8787, create an account (the first account named `admin` gets admin
