@@ -52,8 +52,18 @@ RUN git clone --filter=blob:none "$UPSTREAM_REPO" . \
 # Apply our patches (see patches/README.md for what each one does). `git apply --3way` merges
 # through context drift; if upstream changes conflict outright, the build fails here — regenerate
 # the patch against new upstream rather than shipping a half-patched image.
+#
+# One patch per invocation, staging in between. --3way resolves against the index, so passing
+# several patches to a single `git apply` makes each one after the first fail with "does not
+# match index" once an earlier patch has touched the same file — 0001 and 0002 both edit
+# run-dev-server.js. Staging after each makes the next patch's 3-way base the patched tree.
 COPY patches/ /tmp/patches/
-RUN git apply --3way /tmp/patches/*.patch \
+RUN for patch in /tmp/patches/*.patch; do \
+      echo "applying: $(basename "$patch")" \
+   && git apply --3way "$patch" \
+   && git add -A \
+   || exit 1; \
+    done \
  && git log -1 --format='patched on: %h'
 
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
