@@ -1,0 +1,34 @@
+# Cloudflare OS self-hosted. See README.md for full docs.
+services:
+  cloudflare-os:
+    image: hmk/cloudflare-os:latest
+    # Or build locally from upstream main:
+    # build: .
+    container_name: cloudflare-os
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./data:/config
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: America/New_York
+
+      # --- AI provider keys (deployment-wide; users get these models with no key entry) ---
+      # ANTHROPIC_API_KEY: sk-ant-...
+      # OPENAI_API_KEY: sk-...
+      # GOOGLE_API_KEY: ...
+      # Or use docker secrets / key files:
+      # FILE__ANTHROPIC_API_KEY: /run/secrets/anthropic_key
+
+      # --- Custom domain / reverse proxy ---
+      # Public URL of this deployment; required for OAuth gatekeeper redirects to work
+      # behind a proxy.
+      # PUBLIC_BASE_URL: https://os.example.com
+
+      # --- Optional: OAuth sign-in / gateway billing (see upstream docs/public-server.md) ---
+      # AUTH_GATEKEEPERS: google,github
+      # DISABLE_PASSWORD_AUTH: "true"
+      # GITHUB_CLIENT_ID: ...
+      # GITHUB_CLIENT_SECRET: ...
+    restart: unless-stopped

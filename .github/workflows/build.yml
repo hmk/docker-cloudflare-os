@@ -1,0 +1,160 @@
+# Hourly: check cloudflare/cloudflare-os for new commits and build/push a multi-arch image when
+# there's one we haven't built yet. Stateless: "have we built this?" is answered by checking
+# Docker Hub for the main-<sha> tag, not by tracking anything in this repo.
+#
+# Versioning: upstream publishes no tags or releases yet (package.json is pinned at 1.0.0), so
+# images are versioned by upstream commit and date:
+#   latest                       most recent successful build
+#   main-<upstream short sha>    exact upstream commit the image was built from
+#   YYYYMMDD                     daily pointer (last build of that day wins)
+#   v<package.json version>      only moves when upstream bumps it; becomes meaningful the day
+#                                upstream starts versioning
+#
+# Secrets required (repo settings → secrets → actions):
+#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN   for pushing to Docker Hub
+# The GHCR push uses the built-in GITHUB_TOKEN.
+#
+# If upstream changes conflict with patches/, the Dockerfile's `git apply --3way` step fails the
+# build loudly — regenerate the patch against new upstream rather than shipping a broken image.
+
+name: build
+
+on:
+  schedule:
+    - cron: "23 * * * *"   # hourly, off the :00 rush
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "LICENSE"]
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write   # push to GHCR
+
+env:
+  UPSTREAM_REPO: https://github.com/cloudflare/cloudflare-os.git
+  IMAGE_NAME: cloudflare-os
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve upstream HEAD
+        id: upstream
+        run: |
+          FULL_SHA=$(git ls-remote "$UPSTREAM_REPO" refs/heads/main | cut -f1)
+          if [[ -z "$FULL_SHA" ]]; then echo "Failed to resolve upstream HEAD" >&2; exit 1; fi
+          echo "sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${FULL_SHA:0:9}" >> "$GITHUB_OUTPUT"
+          echo "Upstream HEAD: $FULL_SHA"
+
+      - name: Decide whether to build
+        id: decide
+        run: |
+          TAG="main-${{ steps.upstream.outputs.short_sha }}"
+          # Manual dispatch and pushes to this repo always rebuild (packaging may have changed);
+          # scheduled runs skip when the upstream commit was already published.
+          if [[ "${{ github.event_name }}" != "schedule" ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "Build: forced (${{ github.event_name }})"
+          elif docker manifest inspect \
+              "${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:$TAG" >/dev/null 2>&1; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Skip: $TAG already published"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "Build: $TAG not yet published"
+          fi
+
+      - name: Compute tags
+        if: steps.decide.outputs.build == 'true'
+        id: tags
+        run: |
+          PKG_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/cloudflare/cloudflare-os/${{ steps.upstream.outputs.sha }}/package.json" \
+            | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          echo "pkg_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build amd64 only and load it locally for the smoke test; the multi-arch push below
+      # reuses this build via the GHA cache, so it costs little extra.
+      - name: Build for smoke test
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: smoke-test:local
+          build-args: |
+            UPSTREAM_SHA=${{ steps.upstream.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          docker run -d --name smoke -p 8787:8787 smoke-test:local
+          for i in $(seq 1 100); do
+            if curl -sf -o /dev/null http://localhost:8787/; then
+              echo "OK: serving"; docker rm -f smoke; exit 0
+            fi
+            if [ -n "$(docker ps -aq --filter name=smoke --filter status=exited)" ]; then
+              echo "FAIL: container exited"; docker logs smoke; exit 1
+            fi
+            sleep 3
+          done
+          echo "FAIL: timed out"; docker logs smoke; exit 1
+
+      - name: Build and push
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            UPSTREAM_SHA=${{ steps.upstream.outputs.sha }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.date }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:v${{ steps.tags.outputs.pkg_version }}
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=Cloudflare OS (cloudflare/cloudflare-os) self-hosted on workerd, upstream ${{ steps.upstream.outputs.short_sha }}
+            org.opencontainers.image.revision=${{ steps.upstream.outputs.sha }}
+            org.opencontainers.image.licenses=MIT

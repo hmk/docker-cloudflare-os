@@ -1,0 +1,175 @@
+diff --git a/packages/workshop-backend/src/env-models.ts b/packages/workshop-backend/src/env-models.ts
+new file mode 100644
+index 0000000..ac1e17d
+--- /dev/null
++++ b/packages/workshop-backend/src/env-models.ts
+@@ -0,0 +1,79 @@
++import { AiChatAuthorInfo, AiModelConfig, AiModelProvider, SUGGESTED_MODELS } from "@gadgets/workshop-shared/api";
++import { UserAiModelRecord } from "./user.js";
++
++// Deployment-wide AI models configured via provider API keys in env, for self-hosted
++// deployments (e.g. the Docker image): set ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY
++// and every user gets that provider's SUGGESTED_MODELS without entering a key in the UI.
++//
++// This mirrors the AI Gateway pattern (ai-gateway.ts): env models are merged into listModels()
++// ahead of user-configured models and resolved in getChatContext() the same way. Unlike gateway
++// mode, the API key is placed directly in the returned AiModelConfig, which flows through the
++// same (private) code paths as a key the user typed into the UI.
++//
++// When AI Gateway mode is active it takes priority; env models whose provider the gateway
++// already offers are skipped so the model list contains no duplicates.
++
++const PROVIDER_ENV_KEYS: [AiModelProvider, (env: Cloudflare.Env) => string | undefined][] = [
++  ["anthropic", env => env.ANTHROPIC_API_KEY],
++  ["openai", env => env.OPENAI_API_KEY],
++  ["google", env => env.GOOGLE_API_KEY],
++];
++
++export class EnvModelsConfig {
++  // Providers with a deployment-wide key, in PROVIDER_ENV_KEYS order.
++  readonly providerKeys: Map<AiModelProvider, string>;
++
++  constructor(env: Cloudflare.Env) {
++    this.providerKeys = new Map();
++    for (const [provider, getKey] of PROVIDER_ENV_KEYS) {
++      const key = getKey(env);
++      if (key) this.providerKeys.set(provider, key);
++    }
++  }
++
++  /**
++   * Get the list of env-configured models, as AiChatAuthorInfo entries.
++   */
++  getModelList(): AiChatAuthorInfo[] {
++    let result: AiChatAuthorInfo[] = [];
++    for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
++      if (this.providerKeys.has(provider as AiModelProvider)) {
++        for (let [id, model] of Object.entries(models)) {
++          result.push({ type: "agent", id, name: model.name });
++        }
++      }
++    }
++    return result;
++  }
++
++  /**
++   * Look up an env-configured model by ID. Returns a UserAiModelRecord (with the deployment-wide
++   * API key as its apiToken) if the model is a SUGGESTED_MODEL for a provider with a key in env,
++   * or undefined otherwise.
++   */
++  resolveModel(modelId: string): UserAiModelRecord | undefined {
++    for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
++      let apiToken = this.providerKeys.get(provider as AiModelProvider);
++      if (apiToken !== undefined && modelId in models) {
++        return {
++          profile: { type: "agent", id: modelId, name: models[modelId].name },
++          config: {
++            provider: provider as AiModelConfig["provider"],
++            model: modelId,
++            apiToken,
++          },
++        };
++      }
++    }
++    return undefined;
++  }
++}
++
++/**
++ * Parse env-configured deployment-wide models from environment variables. Returns null if no
++ * provider API keys are set.
++ */
++export function getEnvModelsConfig(env: Cloudflare.Env): EnvModelsConfig | null {
++  const config = new EnvModelsConfig(env);
++  return config.providerKeys.size > 0 ? config : null;
++}
+diff --git a/packages/workshop-backend/src/env.d.ts b/packages/workshop-backend/src/env.d.ts
+index 3077a96..a6b6460 100644
+--- a/packages/workshop-backend/src/env.d.ts
++++ b/packages/workshop-backend/src/env.d.ts
+@@ -26,6 +26,13 @@ declare global {
+       // Note: outside gateway mode, Workers AI (provider "cloudflare") is BYOK like every other
+       // provider -- the account ID and API token live in the user's model config, not in env.
+ 
++      // Deployment-wide provider API keys (see env-models.ts). When set, every user gets that
++      // provider's SUGGESTED_MODELS without entering a key in the UI. Intended for self-hosted
++      // deployments (e.g. the Docker image); AI Gateway mode takes priority when both are set.
++      ANTHROPIC_API_KEY?: string;
++      OPENAI_API_KEY?: string;
++      GOOGLE_API_KEY?: string;
++
+       // Blueprint storage bindings.
+       BLUEPRINTS: KVNamespace;             // Workers KV for blueprint metadata lookup
+       BLUEPRINT_CONTENT: R2Bucket;         // R2 bucket for blueprint code snapshots
+diff --git a/packages/workshop-backend/src/user.ts b/packages/workshop-backend/src/user.ts
+index 727d089..dcb1f0b 100644
+--- a/packages/workshop-backend/src/user.ts
++++ b/packages/workshop-backend/src/user.ts
+@@ -7,6 +7,7 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+ import { createTypedStorage, collection } from "@gadgets/typed-storage";
+ import { createWorkshopLogger } from "./observability";
+ import { getAiGatewayConfig } from "./ai-gateway.js";
++import { getEnvModelsConfig } from "./env-models.js";
+ import { utcDayKey, nextUtcMidnightIso, DailyQuotaResult } from "./ai-gateway-billing/limits/config.js";
+ import type { AdminSettings } from "./admin-settings.js";
+ import { isReservedBlueprintKey, readBlueprintKvRecord } from "./blueprint-archive.js";
+@@ -515,7 +516,19 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
+       }
+     }
+ 
+-    // Also include user-configured models, skipping any that duplicate a gateway model.
++    // Also include deployment-wide models configured via provider API keys in env
++    // (ANTHROPIC_API_KEY etc.; see env-models.ts), skipping providers the gateway already covers.
++    let envConfig = getEnvModelsConfig(this.env);
++    if (envConfig) {
++      for (let entry of envConfig.getModelList()) {
++        if (!gwModelIds.has(entry.id)) {
++          result.push(entry);
++          gwModelIds.add(entry.id);
++        }
++      }
++    }
++
++    // Also include user-configured models, skipping any that duplicate a gateway/env model.
+     for (let model of this.storage.aiModels.list()) {
+       if (!gwModelIds.has(model.profile.id)) {
+         result.push(model.profile);
+@@ -567,9 +580,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
+ 
+   async setPreferredModel(id: string | null): Promise<void> {
+     if (id !== null) {
+-      // Validate that the model exists in the user's configured models or as a gateway model.
++      // Validate that the model exists in the user's configured models or as a gateway/env model.
+       let gwConfig = getAiGatewayConfig(this.env);
+-      let exists = !!this.storage.aiModels.get(id) || !!gwConfig?.resolveModel(id);
++      let envConfig = getEnvModelsConfig(this.env);
++      let exists = !!this.storage.aiModels.get(id) || !!gwConfig?.resolveModel(id) ||
++          !!envConfig?.resolveModel(id);
+       if (!exists) {
+         throw new Error(`No such model: ${id}`);
+       }
+@@ -674,6 +689,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
+       if (gwConfig) {
+         result.aiModel = gwConfig.resolveModel(modelId);
+       }
++      // Then deployment-wide env-configured models (see env-models.ts).
++      if (!result.aiModel) {
++        result.aiModel = getEnvModelsConfig(this.env)?.resolveModel(modelId);
++      }
+       if (!result.aiModel) {
+         result.aiModel = this.storage.aiModels.get(modelId);
+       }
+diff --git a/run-dev-server.js b/run-dev-server.js
+index a5aba89..9d39a8f 100644
+--- a/run-dev-server.js
++++ b/run-dev-server.js
+@@ -246,6 +246,9 @@ for (const gk of gatekeepers) {
+     // over HTTPS with tokens).
+     "CF_AI_GATEWAY", "CF_AI_GATEWAY_PROVIDERS", "CF_AI_GATEWAY_ACCOUNT_ID",
+     "CF_AI_GATEWAY_API_TOKEN", "CF_AI_GATEWAY_WAI", "CF_AI_GATEWAY_WAI_DIRECT",
++    // Deployment-wide provider API keys (see packages/workshop-backend/src/env-models.ts) --
++    // every user gets that provider's suggested models without entering a key in the UI.
++    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
+   ];
+   // OAuth app credentials (GOOGLE_/GITHUB_/CLOUDFLARE_OAUTH_*) are NOT passed to the backend anymore;
+   // they are injected into the gatekeeper Workers (see SHARED_GATEKEEPER_CREDS below).
