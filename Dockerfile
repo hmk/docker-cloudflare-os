@@ -45,20 +45,28 @@ RUN apt-get update \
  && corepack enable
 
 WORKDIR /app
+
+# Patches are copied BEFORE the clone so that editing one invalidates the clone layer too,
+# keeping clone and apply in a single layer. They must not be split: `git apply --3way` implies
+# `--index` and so compares the working tree against .git/index's cached stat data. A layer
+# restored from cache has different inodes than when it was written, that comparison fails, and
+# every file in the patch is rejected with "does not match index" — a fresh checkout that git
+# believes is dirty. Splitting the steps means the apply only ever hits that path on a cache hit,
+# so it passes on a cold build and fails once the patches change.
+COPY patches/ /tmp/patches/
+
+# Clone upstream and apply our patches (see patches/README.md for what each one does).
+# `git apply --3way` merges through context drift; if upstream changes conflict outright, the
+# build fails here — regenerate the patch against new upstream rather than shipping a
+# half-patched image.
+#
+# One patch per invocation, staging in between: --3way resolves against the index, so the second
+# patch to touch a given file needs its predecessor's result staged to merge against. 0001 and
+# 0002 both edit run-dev-server.js.
 RUN git clone --filter=blob:none "$UPSTREAM_REPO" . \
  && git checkout --detach "$UPSTREAM_SHA" \
- && git log -1 --format='upstream: %h %s'
-
-# Apply our patches (see patches/README.md for what each one does). `git apply --3way` merges
-# through context drift; if upstream changes conflict outright, the build fails here — regenerate
-# the patch against new upstream rather than shipping a half-patched image.
-#
-# One patch per invocation, staging in between. --3way resolves against the index, so passing
-# several patches to a single `git apply` makes each one after the first fail with "does not
-# match index" once an earlier patch has touched the same file — 0001 and 0002 both edit
-# run-dev-server.js. Staging after each makes the next patch's 3-way base the patched tree.
-COPY patches/ /tmp/patches/
-RUN for patch in /tmp/patches/*.patch; do \
+ && git log -1 --format='upstream: %h %s' \
+ && for patch in /tmp/patches/*.patch; do \
       echo "applying: $(basename "$patch")" \
    && git apply --3way "$patch" \
    && git add -A \
