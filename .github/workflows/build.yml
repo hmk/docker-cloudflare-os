@@ -5,10 +5,17 @@
 # Versioning: upstream publishes no tags or releases (its package.json "1.0.0" is boilerplate,
 # not a version), so images carry no version tags of their own — builds are identified by the
 # upstream commit they contain:
-#   latest                       most recent successful build
-#   main-<upstream short sha>    exact upstream commit the image was built from
-#   YYYYMMDD                     daily pointer (last build of that day wins)
+#   latest                          most recent successful build
+#   main-<upstream short sha>       most recent build of that upstream commit
+#   main-<upstream>-pkg-<packaging> that commit built with THIS repo's packaging — immutable
+#   YYYYMMDD                        daily pointer (last build of that day wins)
 # If upstream starts tagging releases, mirror their tags verbatim here.
+#
+# Why the -pkg- tag exists: an image is the product of two inputs, upstream's code and this
+# repo's Dockerfile and patches. Tagging by upstream sha alone names only half of that, so a
+# packaging-only change (a new patch, a Dockerfile fix) rebuilds the same main-<sha> tag with
+# different contents — and anything that pinned it silently gets something else. Only the
+# -pkg- tag is safe to pin: the other three all move by design.
 #
 # Secrets required (repo settings → secrets → actions):
 #   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN   for pushing to Docker Hub (Read & Write scope)
@@ -62,9 +69,12 @@ jobs:
       - name: Decide whether to build
         id: decide
         run: |
-          TAG="main-${{ steps.upstream.outputs.short_sha }}"
+          # Check the tag naming BOTH inputs, not just upstream's. Keyed on main-<sha> alone, a
+          # scheduled run would skip forever after a packaging change that never built (a failed
+          # push run, say) — upstream's tag exists, so it looks done when it isn't.
+          TAG="main-${{ steps.upstream.outputs.short_sha }}-pkg-$(git rev-parse --short=9 HEAD)"
           # Manual dispatch and pushes to this repo always rebuild (packaging may have changed);
-          # scheduled runs skip when the upstream commit was already published.
+          # scheduled runs skip when this exact upstream+packaging pair was already published.
           if [[ "${{ github.event_name }}" != "schedule" ]]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
             echo "Build: forced (${{ github.event_name }})"
@@ -82,6 +92,10 @@ jobs:
         id: tags
         run: |
           echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          # This repo's own commit — the packaging half of the image's identity. Paired with the
+          # upstream sha it names both inputs, which is what makes that tag immutable and
+          # therefore the only one worth pinning.
+          echo "pkg_sha=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         if: steps.decide.outputs.build == 'true'
@@ -148,9 +162,11 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}-pkg-${{ steps.tags.outputs.pkg_sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.date }}
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}-pkg-${{ steps.tags.outputs.pkg_sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: |
