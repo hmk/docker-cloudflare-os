@@ -10,6 +10,9 @@ publishing, and ship for `linux/amd64` + `linux/arm64`:
 - Docker Hub: `heimark/cloudflare-os`
 - GHCR: `ghcr.io/hmk/cloudflare-os`
 
+Dockerfile, patches, issues, and PRs:
+[github.com/hmk/docker-cloudflare-os](https://github.com/hmk/docker-cloudflare-os).
+
 > **Status:** upstream calls the wrangler/local path "not meant for production use". This image
 > is for self-hosters and beta testers, not for running a company on. Unofficial,
 > community-maintained; not affiliated with or endorsed by Cloudflare.
@@ -32,7 +35,7 @@ Open http://localhost:8787, create an account (the first account named `admin` g
 features), and start building. With `ANTHROPIC_API_KEY` set, Claude models are available to
 every user immediately — no key entry in the UI.
 
-Or with compose ([`docker-compose.yml`](docker-compose.yml)):
+Or with compose ([`docker-compose.yml`](https://github.com/hmk/docker-cloudflare-os/blob/main/docker-compose.yml)):
 
 ```sh
 docker compose up -d
@@ -130,7 +133,7 @@ Sheet, Calendar, BigQuery table) → connect the account. During testing Google 
 Gmail/Docs/etc., the latter is a Gemini inference key.
 
 **`PUBLIC_BASE_URL` must be set for any of this to work behind a proxy** — see patch 0002 in
-[`patches/README.md`](patches/README.md). Stock upstream's dev-server path ignores it when
+[`patches/README.md`](https://github.com/hmk/docker-cloudflare-os/blob/main/patches/README.md). Stock upstream's dev-server path ignores it when
 building gatekeeper redirect URIs and always sends `localhost:8787`, so consent succeeds and the
 callback then lands on the user's own machine. This image patches that; it is worth knowing if
 you compare against upstream's behavior.
@@ -154,7 +157,8 @@ contents. The `-pkg-` tag names both and is the only one that never moves.
 
 ## What's changed vs upstream
 
-Three small deltas, all documented in [`patches/README.md`](patches/README.md):
+Three small deltas, all documented in
+[`patches/README.md`](https://github.com/hmk/docker-cloudflare-os/blob/main/patches/README.md):
 
 1. **`dev.ip = 0.0.0.0`** in the generated wrangler config (build step in the Dockerfile) —
    upstream binds localhost, which is unreachable through Docker's port mapping.
@@ -180,6 +184,7 @@ docker build --build-arg UPSTREAM_SHA=<sha> -t cloudflare-os .    # pinned commi
 
 ## License
 
-This packaging (Dockerfile, entrypoint, workflow, patches) is [MIT](LICENSE). Cloudflare OS
+This packaging (Dockerfile, entrypoint, workflow, patches) is
+[MIT](https://github.com/hmk/docker-cloudflare-os/blob/main/LICENSE). Cloudflare OS
 itself is licensed by upstream — see
 [cloudflare/cloudflare-os](https://github.com/cloudflare/cloudflare-os/blob/main/LICENSE).
