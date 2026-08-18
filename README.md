@@ -91,7 +91,7 @@ BigQuery all come from the Google one. Each needs an OAuth app you register your
 
 **Upstream's per-gatekeeper READMEs tell you to create a `packages/gatekeeper-<name>/.env`
 file.** That does not apply here: this image ships a pre-built tree with no checkout to edit.
-Pass the credentials as ordinary container environment variables instead — `run-dev-server.js`
+Pass the credentials as ordinary container environment variables instead — the dev server
 maps `<VENDOR>_CLIENT_ID` / `<VENDOR>_CLIENT_SECRET` onto each gatekeeper worker. Everything
 else in those READMEs (which APIs to enable, consent screen, test users, scopes) applies as
 written.

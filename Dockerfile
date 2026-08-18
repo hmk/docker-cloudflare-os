@@ -62,7 +62,7 @@ COPY patches/ /tmp/patches/
 #
 # One patch per invocation, staging in between: --3way resolves against the index, so the second
 # patch to touch a given file needs its predecessor's result staged to merge against. 0001 and
-# 0002 both edit run-dev-server.js.
+# 0002 both edit scripts/run-dev-server.ts.
 RUN git clone --filter=blob:none "$UPSTREAM_REPO" . \
  && git checkout --detach "$UPSTREAM_SHA" \
  && git log -1 --format='upstream: %h %s' \
@@ -78,7 +78,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
 # `wrangler dev` binds to localhost by default, which is unreachable through Docker's port
-# mapping. run-dev-server.js gives no way to pass `--ip`, but it copies every key from
+# mapping. run-dev-server.ts gives no way to pass `--ip`, but it copies every key from
 # wrangler.jsonc into the generated wrangler.dev.jsonc, so set it in config instead. Done as a
 # build step rather than a patch file because it survives any upstream edit to wrangler.jsonc.
 RUN node -e "\
@@ -131,6 +131,7 @@ VOLUME ["/config"]
 
 EXPOSE 8787
 
-# tini reaps the workerd/esbuild children run-dev-server.js spawns and forwards SIGTERM.
+# tini reaps the workerd/esbuild children run-dev-server.ts spawns and forwards SIGTERM.
+# (Plain `node` runs the .ts entrypoint via type stripping, same as upstream's `pnpm dev-server`.)
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
-CMD ["node", "run-dev-server.js", "--serve-frontend-assets"]
+CMD ["node", "scripts/run-dev-server.ts", "--serve-frontend-assets"]

@@ -1,34 +1,22 @@
-diff --git a/run-dev-server.js b/run-dev-server.js
-index a5aba89..ebbd02a 100644
---- a/run-dev-server.js
-+++ b/run-dev-server.js
-@@ -206,6 +206,29 @@ for (const gk of gatekeepers) {
-     if (config.vars.CLIENT_SECRET === undefined) config.vars.CLIENT_SECRET = process.env[shared.secret];
-   }
+diff --git a/scripts/run-dev-server.ts b/scripts/run-dev-server.ts
+index 71cde0a..5ff1b7f 100644
+--- a/scripts/run-dev-server.ts
++++ b/scripts/run-dev-server.ts
+@@ -439,6 +439,17 @@ for (const gk of gatekeepers) {
+   config.vars = config.vars || {};
+   config.vars.BASE_URL = `http://${backendHost}/gatekeeper/${gk.name.slice("gatekeeper-".length)}`;
  
-+  // Each gatekeeper builds its own OAuth redirect_uri from env.BASE_URL, falling back to
-+  // `http://localhost:8787/gatekeeper/<name>` when unset. That default is right for local dev
-+  // and wrong behind a reverse proxy or custom domain: the consent screen appears, then the
-+  // callback goes to the user's own machine instead of the deployment.
-+  //
-+  // The deploy path already solves this — scripts/release/manifest-lib.mjs sets
-+  // `BASE_URL = $PUBLIC_BASE_URL/gatekeeper/<shortName>` per gatekeeper — but nothing seeds it
-+  // here, so a self-hosted instance running this dev server has no way to set it. Mirror that
-+  // same derivation, keeping the two paths in agreement.
-+  //
-+  // Only when PUBLIC_BASE_URL is set: unset means local dev, where the fallback is correct.
-+  // A value already in wrangler.jsonc wins, matching how CLIENT_ID/CLIENT_SECRET behave above.
++  // Behind a reverse proxy or custom domain the backendHost-derived BASE_URL above is wrong:
++  // each gatekeeper builds its OAuth redirect_uri from BASE_URL, so the consent screen appears
++  // and then the callback lands on the user's own machine instead of the deployment. The deploy
++  // path already derives `BASE_URL = $PUBLIC_BASE_URL/gatekeeper/<shortName>` per gatekeeper
++  // (scripts/release/manifest-lib.ts); mirror that derivation here so the two paths agree. Only
++  // when PUBLIC_BASE_URL is set: unset means local dev, where the default above is correct.
 +  if (process.env.PUBLIC_BASE_URL) {
 +    const origin = process.env.PUBLIC_BASE_URL.replace(/\/+$/, "");
-+    // "gatekeeper-google" -> "google", the same path segment the router derives from the
-+    // GATEKEEPER_* binding name (packages/router/src/index.ts).
-+    const shortName = gk.name.slice("gatekeeper-".length);
-+    config.vars = config.vars || {};
-+    if (config.vars.BASE_URL === undefined) {
-+      config.vars.BASE_URL = `${origin}/gatekeeper/${shortName}`;
-+    }
++    config.vars.BASE_URL = `${origin}/gatekeeper/${gk.name.slice("gatekeeper-".length)}`;
 +  }
 +
-   // The shell wins over the committed default, so `MCP_ALLOW_INSECURE=true` can override the
-   // `"false"` in wrangler.jsonc without editing it.
-   for (const name of PASSTHROUGH_GATEKEEPER_VARS[gk.name] ?? []) {
+   const shared = SHARED_GATEKEEPER_CREDS[gk.name];
+   if (shared && process.env[shared.id] && process.env[shared.secret]) {
+     if (config.vars.CLIENT_ID === undefined) config.vars.CLIENT_ID = process.env[shared.id];
