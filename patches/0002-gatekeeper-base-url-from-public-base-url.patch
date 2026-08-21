@@ -1,8 +1,8 @@
 diff --git a/scripts/run-dev-server.ts b/scripts/run-dev-server.ts
-index 71cde0a..5ff1b7f 100644
+index b274048..f59c5e0 100644
 --- a/scripts/run-dev-server.ts
 +++ b/scripts/run-dev-server.ts
-@@ -439,6 +439,17 @@ for (const gk of gatekeepers) {
+@@ -441,6 +441,17 @@ for (const gk of gatekeepers) {
    config.vars = config.vars || {};
    config.vars.BASE_URL = `http://${backendHost}/gatekeeper/${gk.name.slice("gatekeeper-".length)}`;
  

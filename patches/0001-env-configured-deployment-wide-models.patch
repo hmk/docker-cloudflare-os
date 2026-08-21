@@ -84,10 +84,10 @@ index 0000000..ac1e17d
 +  return config.providerKeys.size > 0 ? config : null;
 +}
 diff --git a/packages/workshop-backend/src/env.d.ts b/packages/workshop-backend/src/env.d.ts
-index e044383..38272f8 100644
+index 9ad6c00..4e23da0 100644
 --- a/packages/workshop-backend/src/env.d.ts
 +++ b/packages/workshop-backend/src/env.d.ts
-@@ -27,6 +27,13 @@ declare global {
+@@ -24,6 +24,13 @@ declare global {
        // Note: outside gateway mode, Workers AI (provider "cloudflare") is BYOK like every other
        // provider -- the account ID and API token live in the user's model config, not in env.
  
@@ -102,7 +102,7 @@ index e044383..38272f8 100644
        BLUEPRINTS: KVNamespace;             // Workers KV for blueprint metadata lookup
        BLUEPRINT_CONTENT: R2Bucket;         // R2 bucket for blueprint code snapshots
 diff --git a/packages/workshop-backend/src/user.ts b/packages/workshop-backend/src/user.ts
-index a31dd27..6041c6c 100644
+index 5ad4a23..81387d4 100644
 --- a/packages/workshop-backend/src/user.ts
 +++ b/packages/workshop-backend/src/user.ts
 @@ -7,6 +7,7 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
@@ -148,7 +148,7 @@ index a31dd27..6041c6c 100644
        if (!exists) {
          throw new Error(`No such model: ${id}`);
        }
-@@ -703,6 +718,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
+@@ -704,6 +719,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
        if (gwConfig) {
          result.aiModel = gwConfig.resolveModel(modelId);
        }
@@ -160,13 +160,13 @@ index a31dd27..6041c6c 100644
          result.aiModel = this.storage.aiModels.get(modelId);
        }
 diff --git a/scripts/run-dev-server.ts b/scripts/run-dev-server.ts
-index 71cde0a..bc62bbf 100644
+index b274048..57fa3f7 100644
 --- a/scripts/run-dev-server.ts
 +++ b/scripts/run-dev-server.ts
-@@ -484,6 +484,9 @@ for (const gk of gatekeepers) {
-     // over HTTPS with tokens).
+@@ -489,6 +489,9 @@ for (const gk of gatekeepers) {
+     // needs the token even when the binding is present.
      "CF_AI_GATEWAY", "CF_AI_GATEWAY_PROVIDERS", "CF_AI_GATEWAY_ACCOUNT_ID",
-     "CF_AI_GATEWAY_API_TOKEN", "CF_AI_GATEWAY_WAI", "CF_AI_GATEWAY_WAI_DIRECT",
+     "CF_AI_GATEWAY_API_TOKEN", "CF_AI_GATEWAY_USE_BINDING",
 +    // Deployment-wide provider API keys (see packages/workshop-backend/src/env-models.ts) --
 +    // every user gets that provider's suggested models without entering a key in the UI.
 +    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
