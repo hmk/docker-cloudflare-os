@@ -51,8 +51,14 @@ env:
   IMAGE_NAME: cloudflare-os
 
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      sha: ${{ steps.upstream.outputs.sha }}
+      short_sha: ${{ steps.upstream.outputs.short_sha }}
+      date: ${{ steps.tags.outputs.date }}
+      pkg_sha: ${{ steps.tags.outputs.pkg_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -97,49 +103,58 @@ jobs:
           # therefore the only one worth pinning.
           echo "pkg_sha=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        if: steps.decide.outputs.build == 'true'
-        uses: docker/setup-qemu-action@v3
+  # TypeScript's native compiler uses process.execve, which fails with ENOSYS under QEMU.
+  # Build and smoke-test each architecture on a matching runner, then publish one manifest.
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Buildx
-        if: steps.decide.outputs.build == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        if: steps.decide.outputs.build == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Login to GHCR
-        if: steps.decide.outputs.build == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build amd64 only and load it locally for the smoke test; the multi-arch push below
-      # reuses this build via the GHA cache, so it costs little extra.
+      # Load the native image for the smoke test; the digest push reuses its build cache.
       - name: Build for smoke test
-        if: steps.decide.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           load: true
           tags: smoke-test:local
           build-args: |
-            UPSTREAM_SHA=${{ steps.upstream.outputs.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            UPSTREAM_SHA=${{ needs.prepare.outputs.sha }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
       - name: Smoke test
-        if: steps.decide.outputs.build == 'true'
         run: |
           docker run -d --name smoke -p 8787:8787 smoke-test:local
           for i in $(seq 1 100); do
+            echo "Waiting for HTTP readiness ($i/100)"
             if curl -sf -o /dev/null http://localhost:8787/; then
               echo "OK: serving"; docker rm -f smoke; exit 0
             fi
@@ -150,37 +165,94 @@ jobs:
           done
           echo "FAIL: timed out"; docker logs smoke; exit 1
 
-      - name: Build and push
-        if: steps.decide.outputs.build == 'true'
+      - name: Push by digest
+        id: push
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,"name=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }},ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}",push-by-digest=true,name-canonical=true,push=true
           build-args: |
-            UPSTREAM_SHA=${{ steps.upstream.outputs.sha }}
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}-pkg-${{ steps.tags.outputs.pkg_sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.date }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:main-${{ steps.upstream.outputs.short_sha }}-pkg-${{ steps.tags.outputs.pkg_sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            UPSTREAM_SHA=${{ needs.prepare.outputs.sha }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.description=Cloudflare OS (cloudflare/cloudflare-os) self-hosted on workerd, upstream ${{ steps.upstream.outputs.short_sha }}
-            org.opencontainers.image.revision=${{ steps.upstream.outputs.sha }}
+            org.opencontainers.image.description=Cloudflare OS (cloudflare/cloudflare-os) self-hosted on workerd, upstream ${{ needs.prepare.outputs.short_sha }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
             org.opencontainers.image.licenses=MIT
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-architecture tags
+        env:
+          HUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          UPSTREAM: ${{ needs.prepare.outputs.short_sha }}
+          PACKAGING: ${{ needs.prepare.outputs.pkg_sha }}
+          DATE: ${{ needs.prepare.outputs.date }}
+        run: |
+          cd "$RUNNER_TEMP/digests"
+          digests=(*)
+          [[ ${#digests[@]} -eq 2 ]] || { echo "Expected two platform digests" >&2; exit 1; }
+          for image in "$HUB_IMAGE" "$GHCR_IMAGE"; do
+            tags=(-t "$image:latest" -t "$image:main-$UPSTREAM" -t "$image:main-$UPSTREAM-pkg-$PACKAGING")
+            if [[ "$image" == "$HUB_IMAGE" ]]; then tags+=(-t "$image:$DATE"); fi
+            sources=()
+            for digest in "${digests[@]}"; do sources+=("$image@sha256:$digest"); done
+            docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+            docker buildx imagetools inspect "$image:main-$UPSTREAM-pkg-$PACKAGING"
+          done
 
       # Keep the Docker Hub Overview page in sync with README.md. Needs a Read/Write/Delete
       # token (DOCKERHUB_RWD_TOKEN) because the Hub API gates metadata updates above plain
       # Write; skipped when the secret isn't configured.
       # (The secrets context can't be used in `if:` expressions, hence the env indirection.)
       - name: Sync Docker Hub description
-        if: steps.decide.outputs.build == 'true' && env.RWD_TOKEN != ''
+        if: env.RWD_TOKEN != ''
         env:
           RWD_TOKEN: ${{ secrets.DOCKERHUB_RWD_TOKEN }}
         uses: peter-evans/dockerhub-description@v4
