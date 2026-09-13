@@ -1,13 +1,14 @@
-# docker-cloudflare-os
+# Cloudflare OS Docker image — self-hosted, AMD64 & ARM64
 
-Self-hosted [Cloudflare OS](https://github.com/cloudflare/cloudflare-os) in a container: the full
-stack (router, workshop backend, and all gatekeepers) running on `workerd` via `wrangler dev`,
+Run [Cloudflare OS](https://github.com/cloudflare/cloudflare-os) locally with Docker or Docker
+Compose using the unofficial **heimark/cloudflare-os** image. The full
+stack (router, workshop backend, and all gatekeepers) runs on `workerd` via `wrangler dev`,
 pre-built at image build time so containers start straight into serving.
 
-Images rebuild automatically within an hour of upstream commits, are smoke-tested before
-publishing, and ship for `linux/amd64` + `linux/arm64`:
+Scheduled builds check hourly for upstream updates. Images are built and smoke-tested on native
+`linux/amd64` and `linux/arm64` runners before publishing:
 
-- Docker Hub: `heimark/cloudflare-os`
+- Docker Hub: [heimark/cloudflare-os — image overview and pull instructions](https://hub.docker.com/r/heimark/cloudflare-os)
 - GHCR: `ghcr.io/hmk/cloudflare-os`
 
 Dockerfile, patches, issues, and PRs:
@@ -17,8 +18,13 @@ Dockerfile, patches, issues, and PRs:
 > is for self-hosters and beta testers, not for running a company on. Unofficial,
 > community-maintained; not affiliated with or endorsed by Cloudflare.
 
-This image follows [linuxserver.io](https://docs.linuxserver.io/) conventions: a single
-`/config` volume, `PUID`/`PGID`, `TZ`, and `FILE__`-prefixed secrets.
+Features for self-hosting:
+
+- Persistent data in a single `/config` volume.
+- Deployment-wide model keys through `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY`.
+- OAuth redirect fixes for gatekeepers behind a reverse proxy, configured with `PUBLIC_BASE_URL`.
+- [linuxserver.io](https://docs.linuxserver.io/) conventions: `PUID`/`PGID`, `TZ`, and `FILE__`-prefixed secrets.
+- Commit-based image tags, including immutable tags that identify both upstream and packaging revisions.
 
 ## Quick start
 
