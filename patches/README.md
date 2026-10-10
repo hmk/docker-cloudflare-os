@@ -49,11 +49,19 @@ This is a candidate to send upstream. If it lands there, drop the patch.
 
 ## Regenerating a patch
 
+The patches were refreshed against upstream `7ec49d8c865917c7be0401938eadc7218ed9d398`.
+Patch 0001 uses the shared model resolver for chat and preferred-model validation, and
+respects gateway model modes and the admin restriction on non-gateway models.
+
+Use `--full-index`: the Dockerfile uses a partial clone, and Git needs complete blob IDs
+to fetch missing base blobs for a three-way merge. Abbreviated IDs only work when the
+base blob is already present locally.
+
 In a checkout of upstream with the change applied to the working tree:
 
 ```sh
 git add -N packages/workshop-backend/src/env-models.ts   # -N any new files
-git diff -- scripts/run-dev-server.ts \
+git diff --full-index -- scripts/run-dev-server.ts \
     packages/workshop-backend/src/env.d.ts \
     packages/workshop-backend/src/user.ts \
     packages/workshop-backend/src/env-models.ts \
@@ -64,6 +72,6 @@ Regenerate 0002 from a **clean** upstream checkout (no other patches applied), s
 carries only its own hunk:
 
 ```sh
-git diff -- scripts/run-dev-server.ts \
+git diff --full-index -- scripts/run-dev-server.ts \
     > patches/0002-gatekeeper-base-url-from-public-base-url.patch
 ```

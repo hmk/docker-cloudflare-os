@@ -150,6 +150,18 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
+      - name: Model regression tests
+        timeout-minutes: 10
+        run: |
+          docker run --rm --entrypoint /bin/sh \
+            -v "$PWD/tests/env-models.test.ts:/app/packages/workshop-backend/__tests__/env-models.test.ts:ro" \
+            smoke-test:local -c '
+              cd packages/workshop-backend &&
+              node scripts/build-browser-runtime.ts &&
+              node scripts/build-bundled-blueprints.ts &&
+              pnpm exec vitest run __tests__/env-models.test.ts __tests__/user-models.test.ts
+            '
+
       - name: Smoke test
         run: |
           docker run -d --name smoke -p 8787:8787 smoke-test:local

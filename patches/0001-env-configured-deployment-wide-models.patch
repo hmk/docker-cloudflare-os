@@ -1,11 +1,11 @@
 diff --git a/packages/workshop-backend/src/env-models.ts b/packages/workshop-backend/src/env-models.ts
 new file mode 100644
-index 0000000..ac1e17d
+index 0000000000000000000000000000000000000000..b2be0e7e656b4036a85fae4a4412642e4e59d522
 --- /dev/null
 +++ b/packages/workshop-backend/src/env-models.ts
 @@ -0,0 +1,79 @@
 +import { AiChatAuthorInfo, AiModelConfig, AiModelProvider, SUGGESTED_MODELS } from "@gadgets/workshop-shared/api";
-+import { UserAiModelRecord } from "./user.js";
++import type { UserAiModelRecord } from "./storage-schema/user-storage.js";
 +
 +// Deployment-wide AI models configured via provider API keys in env, for self-hosted
 +// deployments (e.g. the Docker image): set ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY
@@ -60,7 +60,7 @@ index 0000000..ac1e17d
 +  resolveModel(modelId: string): UserAiModelRecord | undefined {
 +    for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
 +      let apiToken = this.providerKeys.get(provider as AiModelProvider);
-+      if (apiToken !== undefined && modelId in models) {
++      if (apiToken !== undefined && Object.hasOwn(models, modelId)) {
 +        return {
 +          profile: { type: "agent", id: modelId, name: models[modelId].name },
 +          config: {
@@ -84,7 +84,7 @@ index 0000000..ac1e17d
 +  return config.providerKeys.size > 0 ? config : null;
 +}
 diff --git a/packages/workshop-backend/src/env.d.ts b/packages/workshop-backend/src/env.d.ts
-index 9ad6c00..4e23da0 100644
+index ed6191d69c5cb15f037653872e0ec1a0a0db3f06..61a5fa6f42d7c492bc5952095e22ead02f0f29b4 100644
 --- a/packages/workshop-backend/src/env.d.ts
 +++ b/packages/workshop-backend/src/env.d.ts
 @@ -24,6 +24,13 @@ declare global {
@@ -102,68 +102,48 @@ index 9ad6c00..4e23da0 100644
        BLUEPRINTS: KVNamespace;             // Workers KV for blueprint metadata lookup
        BLUEPRINT_CONTENT: R2Bucket;         // R2 bucket for blueprint code snapshots
 diff --git a/packages/workshop-backend/src/user.ts b/packages/workshop-backend/src/user.ts
-index 5ad4a23..81387d4 100644
+index c1ff484ed41e7ea7d7bf8217aae4ba6d432a0da7..005c3287f3c7d4372bd7270e38ccc5f97b94d9b7 100644
 --- a/packages/workshop-backend/src/user.ts
 +++ b/packages/workshop-backend/src/user.ts
-@@ -7,6 +7,7 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
- import { createTypedStorage, collection } from "@gadgets/typed-storage";
+@@ -12,6 +12,7 @@ import {
+ import { recordAnalytics } from "./analytics";
  import { createWorkshopLogger } from "./observability";
- import { getAiGatewayConfig } from "./ai-gateway.js";
+ import { getGatewayModels, type GatewayModels } from "./ai-gateway.js";
 +import { getEnvModelsConfig } from "./env-models.js";
  import { utcDayKey, nextUtcMidnightIso, DailyQuotaResult } from "./ai-gateway-billing/limits/config.js";
  import type { AdminSettings } from "./admin-settings.js";
- import { isReservedBlueprintKey, readBlueprintKvRecord } from "./blueprint-archive.js";
-@@ -538,7 +539,19 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
+ import { deleteBlueprintContent } from "./blueprint-archive.js";
+@@ -515,8 +516,14 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
+     // Also include user-configured models, where users may add their own, skipping any that a
+     // gateway model shadows, whatever its mode (see #resolveModel()).
+     if (models && !models.userModels) return result;
++    // Gateway IDs stay reserved even when hidden or disabled by the admin.
++    let envModels = getEnvModelsConfig(this.env)?.getModelList() ?? [];
++    for (let model of envModels) {
++      if (!models?.get(model.id)) result.push(model);
++    }
++    let envModelIds = new Set(envModels.map(model => model.id));
+     for (let model of this.storage.aiModels.list()) {
+-      if (!models?.get(model.profile.id)) {
++      if (!models?.get(model.profile.id) && !envModelIds.has(model.profile.id)) {
+         result.push(model.profile);
        }
      }
+@@ -767,7 +774,8 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
+    */
+   #resolveModel(id: string, models: GatewayModels | null): UserAiModelRecord | undefined {
+     if (models?.get(id)) return models.resolve(id);
+-    return models && !models.userModels ? undefined : this.storage.aiModels.get(id);
++    if (models && !models.userModels) return undefined;
++    return getEnvModelsConfig(this.env)?.resolveModel(id) ?? this.storage.aiModels.get(id);
+   }
  
--    // Also include user-configured models, skipping any that duplicate a gateway model.
-+    // Also include deployment-wide models configured via provider API keys in env
-+    // (ANTHROPIC_API_KEY etc.; see env-models.ts), skipping providers the gateway already covers.
-+    let envConfig = getEnvModelsConfig(this.env);
-+    if (envConfig) {
-+      for (let entry of envConfig.getModelList()) {
-+        if (!gwModelIds.has(entry.id)) {
-+          result.push(entry);
-+          gwModelIds.add(entry.id);
-+        }
-+      }
-+    }
-+
-+    // Also include user-configured models, skipping any that duplicate a gateway/env model.
-     for (let model of this.storage.aiModels.list()) {
-       if (!gwModelIds.has(model.profile.id)) {
-         result.push(model.profile);
-@@ -590,9 +603,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
- 
-   async setPreferredModel(id: string | null): Promise<void> {
-     if (id !== null) {
--      // Validate that the model exists in the user's configured models or as a gateway model.
-+      // Validate that the model exists in the user's configured models or as a gateway/env model.
-       let gwConfig = getAiGatewayConfig(this.env);
--      let exists = !!this.storage.aiModels.get(id) || !!gwConfig?.resolveModel(id);
-+      let envConfig = getEnvModelsConfig(this.env);
-+      let exists = !!this.storage.aiModels.get(id) || !!gwConfig?.resolveModel(id) ||
-+          !!envConfig?.resolveModel(id);
-       if (!exists) {
-         throw new Error(`No such model: ${id}`);
-       }
-@@ -704,6 +719,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
-       if (gwConfig) {
-         result.aiModel = gwConfig.resolveModel(modelId);
-       }
-+      // Then deployment-wide env-configured models (see env-models.ts).
-+      if (!result.aiModel) {
-+        result.aiModel = getEnvModelsConfig(this.env)?.resolveModel(modelId);
-+      }
-       if (!result.aiModel) {
-         result.aiModel = this.storage.aiModels.get(modelId);
-       }
+   async listGadgets(): Promise<GadgetMetadataWithTimestamps[]> {
 diff --git a/scripts/run-dev-server.ts b/scripts/run-dev-server.ts
-index b274048..57fa3f7 100644
+index cbdfdb0fbe8b21437d459aa1e008df7ca91c2316..b704d17bc361af8a5d76e6bf9eaf258669f5aade 100644
 --- a/scripts/run-dev-server.ts
 +++ b/scripts/run-dev-server.ts
-@@ -489,6 +489,9 @@ for (const gk of gatekeepers) {
+@@ -557,6 +557,9 @@ for (const gk of gatekeepers) {
      // needs the token even when the binding is present.
      "CF_AI_GATEWAY", "CF_AI_GATEWAY_PROVIDERS", "CF_AI_GATEWAY_ACCOUNT_ID",
      "CF_AI_GATEWAY_API_TOKEN", "CF_AI_GATEWAY_USE_BINDING",
