@@ -1,0 +1,15 @@
+diff --git a/scripts/run-dev-server.ts b/scripts/run-dev-server.ts
+index cbdfdb0fbe8b21437d459aa1e008df7ca91c2316..32c8081afdd3696b8151b6a668c0547298a04888 100644
+--- a/scripts/run-dev-server.ts
++++ b/scripts/run-dev-server.ts
+@@ -450,6 +450,10 @@ function devBuildConfig(build: WranglerBuild | undefined, pkgDir: string): Wrang
+   const srcPath = join(ROOT, "wrangler.jsonc");
+   const config = parse(readFileSync(srcPath, "utf8"));
+ 
++  // Set this after generateWorkerConfigs(), which overwrites wrangler.jsonc at startup.
++  // Docker port forwarding cannot reach a listener bound to container-local localhost.
++  config.dev = { ...config.dev, ip: "0.0.0.0", port: 8787 };
++
+   config.services = config.services || [];
+   for (const gk of gatekeepers) {
+     config.services.push({ binding: bindingName(gk), service: gk.name });

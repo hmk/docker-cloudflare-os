@@ -8,12 +8,9 @@ that a patch no longer applies, the build fails loudly; regenerate the patch aga
 | --- | --- |
 | `0001-env-configured-deployment-wide-models.patch` | Adds `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_API_KEY` env support: every user gets that provider's suggested models with no key entry in the UI. New file `packages/workshop-backend/src/env-models.ts` plus small hooks in `user.ts`, `env.d.ts`, and `scripts/run-dev-server.ts`, mirroring upstream's AI Gateway pattern. AI Gateway mode takes priority when both are configured. |
 | `0002-gatekeeper-base-url-from-public-base-url.patch` | Derives each gatekeeper's `BASE_URL` from `PUBLIC_BASE_URL` in `scripts/run-dev-server.ts`, so OAuth redirect URIs point at the deployment instead of `localhost:8787`. Without it every OAuth gatekeeper (Google, GitHub, Slack, Notion, …) is unusable behind a reverse proxy: consent succeeds, then the callback lands on the *user's own machine*. See below for why this is not simply a missing env var. |
+| `0003-listen-on-all-interfaces.patch` | Sets `dev.ip = 0.0.0.0` in the router’s generated dev config so Docker port forwarding can reach it. Upstream regenerates `wrangler.jsonc` at startup, so editing that file at image build time is ineffective. |
 
-Both patches touch `scripts/run-dev-server.ts` but in different hunks (0001 in the backend's
-`OPTIONAL_FEATURE_VARS`, 0002 in the gatekeeper loop above it), so they apply in either order.
-
-(The `dev.ip = 0.0.0.0` fix lives as a build step in the Dockerfile, not a patch — it edits
-generated config via the JSON parser, so it survives upstream edits to `wrangler.jsonc`.)
+All three patches touch `scripts/run-dev-server.ts` in different hunks, so they apply independently.
 
 ## Why 0002 exists
 

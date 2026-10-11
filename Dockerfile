@@ -77,21 +77,6 @@ RUN git clone --filter=blob:none "$UPSTREAM_REPO" . \
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
-# `wrangler dev` binds to localhost by default, which is unreachable through Docker's port
-# mapping. run-dev-server.ts gives no way to pass `--ip`, but it copies every key from
-# wrangler.jsonc into the generated wrangler.dev.jsonc, so set it in config instead. Done as a
-# build step rather than a patch file because it survives any upstream edit to wrangler.jsonc.
-# Resolve jsonc-parser from the scripts workspace, which declares the dependency.
-RUN node -e "\
-  const fs = require('node:fs'); \
-  const { createRequire } = require('node:module'); \
-  const { parse } = createRequire('/app/scripts/package.json')('jsonc-parser'); \
-  const config = parse(fs.readFileSync('wrangler.jsonc', 'utf8')); \
-  config.dev = { ...config.dev, ip: '0.0.0.0', port: 8787 }; \
-  fs.writeFileSync('wrangler.jsonc', JSON.stringify(config, null, 2) + '\n'); \
-  console.log('patched wrangler.jsonc dev.ip=0.0.0.0'); \
-"
-
 # Same two builds upstream's scripts/run-local.ts performs: the backend imports typed-storage
 # from its built `dist`, and the backend serves the frontend bundle as static assets.
 RUN pnpm exec vp run --cache @gadgets/typed-storage#build \

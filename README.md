@@ -166,7 +166,7 @@ contents. The `-pkg-` tag names both and is the only one that never moves.
 Three small deltas, all documented in
 [`patches/README.md`](https://github.com/hmk/docker-cloudflare-os/blob/main/patches/README.md):
 
-1. **`dev.ip = 0.0.0.0`** in the generated wrangler config (build step in the Dockerfile) —
+1. **`dev.ip = 0.0.0.0`** in the generated wrangler dev config (`patches/0003-…`) —
    upstream binds localhost, which is unreachable through Docker's port mapping.
 2. **Env-configured deployment-wide models** (`patches/0001-…`) — upstream only supports
    per-user keys entered in the UI, or Cloudflare AI Gateway mode. This patch merges models from
